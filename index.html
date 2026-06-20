@@ -1262,9 +1262,11 @@ function renderResults() {
   if (!container) return;
   container.innerHTML = '';
 
-  // Önce sonucu girilmiş maçları filtrele, sonra tarihe göre EN YENİDEN EN ESKİYE doğru sırala
+  // Önce sonucu girilmiş maçları filtrele, sonra tarih VE saat birleşimine göre EN YENİDEN EN ESKİYE sırala
   const playedMatches = MATCHES.filter(m => RESULTS[m.id]).sort((a, b) => {
-    return new Date(b.d + 'T00:00:00') - new Date(a.d + 'T00:00:00');
+    const dateTimeB = new Date(b.d + 'T' + b.t + ':00');
+    const dateTimeA = new Date(a.d + 'T' + a.t + ':00');
+    return dateTimeB - dateTimeA;
   });
 
   if (playedMatches.length === 0) {
