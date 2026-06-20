@@ -1262,7 +1262,10 @@ function renderResults() {
   if (!container) return;
   container.innerHTML = '';
 
-  const playedMatches = MATCHES.filter(m => RESULTS[m.id]);
+  // Önce sonucu girilmiş maçları filtrele, sonra tarihe göre EN YENİDEN EN ESKİYE doğru sırala
+  const playedMatches = MATCHES.filter(m => RESULTS[m.id]).sort((a, b) => {
+    return new Date(b.d + 'T00:00:00') - new Date(a.d + 'T00:00:00');
+  });
 
   if (playedMatches.length === 0) {
     container.innerHTML = '<div class="card" style="text-align:center; color:var(--muted); padding:20px;">Henüz oynanmış maç bulunmuyor.</div>';
