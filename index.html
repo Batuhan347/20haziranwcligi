@@ -756,12 +756,21 @@ function renderMatches(){
   const container = document.getElementById('matches-container');
   container.innerHTML = '';
 
-  // Tarihe göre grupla
+  // Tarihe göre grupla (YALNIZCA SONUCU GİRİLMEMİŞ MAÇLARI ALIR)
   const byDate = {};
   MATCHES.forEach(m => {
+    // EĞER MAÇIN SONUCU ADMİN TARAFINDAN GİRİLMİŞSE BU SEKMEDE GÖSTERME (ES GEÇ)
+    if (RESULTS[m.id]) return;
+
     if(!byDate[m.d]) byDate[m.d] = [];
     byDate[m.d].push(m);
   });
+
+  // Eğer tüm maçlar oynandıysa ve tahmin edilecek maç kalmadıysa mesaj göster
+  if (Object.keys(byDate).length === 0) {
+    container.innerHTML = '<div class="card" style="text-align:center; color:var(--muted); padding: 20px;">Tahmin edilecek aktif maç bulunmuyor. Tüm sonuçları Sonuçlar sekmesinden görebilirsiniz.</div>';
+    return;
+  }
 
   Object.keys(byDate).sort().forEach(date => {
     const dateBlock = document.createElement('div');
@@ -775,8 +784,8 @@ function renderMatches(){
 
     container.appendChild(dateBlock);
   });
-}
-
+} 
+  
 function formatDate(dateStr){
   const d = new Date(dateStr + 'T00:00:00');
   const days = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
