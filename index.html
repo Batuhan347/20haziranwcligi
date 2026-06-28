@@ -884,157 +884,68 @@ function refreshAll() {
 }
 
 /* =========================================================
-   8. SIRALAMA TABLOSU (LEADERBOARD SYSTEM)
+   YENİ YARDIMCI FONKSİYON: DİNAMİK TAKIM ADI ÇÖZÜCÜ (FİNALE KADAR)
    ========================================================= */
-function calculateLeaderboard() {
-  const tbody = document.getElementById('leaderboard-list');
-  if (!tbody) return;
-  tbody.innerHTML = '';
+function resolveDynamicMatch(match) {
+  // Maçın orijinal verilerini bozmamak için kopyasını oluşturuyoruz
+  const resolved = { ...match };
 
-  const stats = [];
+  // Bir kaynak maç kodundan (örn: "W74", "RU101") kazananı veya kaybedeni bulan iç fonksiyon
+  function getDependentTeamName(code) {
+    if (!code) return null;
+    const isWinner = code.startsWith('W');
+    const isRunnerUp = code.startsWith('RU');
+    
+    if (!isWinner && !isRunnerUp) return null;
 
-  for (const [uid, user] of Object.entries(USERS)) {
-    if (isAdminName(user.name)) continue;
+    // Kodun içindeki sayısal ID'yi ayıkla (örn: "W74 (GER/PAR)" -> "74" -> "M74")
+    const matchNum = code.replace(/[^0-9]/g, '');
+    const depMatchId = 'M' + matchNum;
 
-    let P = 0, O = 0, TS = 0, KB = 0, Y = 0;
-    const userPreds = PREDICTIONS[uid] || {};
+    const result = RESULTS[depMatchId];
+    if (!result) return null; // Bağımlı olunan maç henüz oynanmamış
 
-    for (const [matchId, pred] of Object.entries(userPreds)) {
-      const result = RESULTS[matchId];
-      if (!result) continue; 
-      
-      const evalRes = evaluatePrediction(pred, result);
-      if (!evalRes) continue;
+    const depMatch = MATCHES.find(m => m.id === depMatchId);
+    if (!depMatch) return null;
 
-      O++;
-      P += evalRes.point;
-      if (evalRes.label.includes('TS')) TS++;
-      else if (evalRes.label.includes('KB')) KB++;
-      else Y++;
+    // Önce o kaynak maçın kendi içinde dinamik adları varsa onları çöz (Zincirleme kontrol)
+    const resolvedDepMatch = resolveDynamicMatch(depMatch);
+
+    let winnerName = null;
+    let loserName = null;
+
+    if (result.penWinner) {
+      winnerName = result.penWinner === 'home' ? resolvedDepMatch.h : resolvedDepMatch.a;
+      loserName = result.penWinner === 'home' ? resolvedDepMatch.a : resolvedDepMatch.h;
+    } else {
+      const hs = parseInt(result.hScore);
+      const as = parseInt(result.aScore);
+      if (hs > as) {
+        winnerName = resolvedDepMatch.h;
+        loserName = resolvedDepMatch.a;
+      } else if (as > hs) {
+        winnerName = resolvedDepMatch.a;
+        loserName = resolvedDepMatch.h;
+      }
     }
 
-    const AV = O > 0 ? (P / O) : 0;
-    stats.push({ uid, name: user.name, P, O, TS, KB, Y, AV });
+    if (isWinner) return winnerName;
+    if (isRunnerUp) return loserName;
+    return null;
   }
 
-  stats.sort((a, b) => {
-    if (b.P !== a.P) return b.P - a.P;
-    return b.TS - a.TS;
-  });
+  // Ev sahibi ve Deplasman için kontrolleri gerçekleştir
+  const resolvedHome = getDependentTeamName(resolved.h);
+  if (resolvedHome) resolved.h = resolvedHome;
 
-  const medals = ['🥇', '🥈', '🥉'];
+  const resolvedAway = getDependentTeamName(resolved.a);
+  if (resolvedAway) resolved.a = resolvedAway;
 
-  stats.forEach((s, index) => {
-    const tr = document.createElement('tr');
-    const rankDisplay = medals[index] ? medals[index] + ' ' + (index + 1) : (index + 1);
-    const initial = (s.name || '?').charAt(0).toUpperCase();
-    const avatarColor = getInitialColor(s.name || '');
-
-    tr.innerHTML = `
-      <td class="rank-num">${rankDisplay}</td>
-      <td class="player-cell">
-        <div class="avatar" style="background:${avatarColor}">${initial}</div>
-        <span>${s.name}</span>
-      </td>
-      <td class="points">${s.P}</td>
-      <td>${s.O}</td>
-      <td>${s.TS}</td>
-      <td>${s.KB}</td>
-      <td>${s.Y}</td>
-      <td>${s.AV.toFixed(2)}</td>
-    `;
-    tbody.appendChild(tr);
-  });
-
-  if (stats.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" style="color:var(--muted); padding:16px; text-align:center;">Henüz oyuncu bulunmuyor.</td></tr>';
-  }
+  return resolved;
 }
 
 /* =========================================================
-   9. GRUP PUAN DURUMLARI (DYNAMIC GROUP STANDINGS)
-   ========================================================= */
-function renderGroups() {
-  const container = document.getElementById('groups-container');
-  if (!container) return;
-  container.innerHTML = '';
-
-  const groups = {};
-
-  MATCHES.forEach(m => {
-    if (m.type !== 'group') return; // Eleme turları grup puan durumunu etkilemez
-    if (!groups[m.g]) groups[m.g] = {};
-    if (!groups[m.g][m.h]) groups[m.g][m.h] = newTeamStat(m.h);
-    if (!groups[m.g][m.a]) groups[m.g][m.a] = newTeamStat(m.a);
-  });
-
-  MATCHES.forEach(m => {
-    if (m.type !== 'group') return;
-    const result = RESULTS[m.id];
-    if (!result) return;
-    
-    const hs = parseInt(result.hScore), as = parseInt(result.aScore);
-    if (isNaN(hs) || isNaN(as)) return;
-
-    const home = groups[m.g][m.h];
-    const away = groups[m.g][m.a];
-
-    home.O++; away.O++;
-    home.GF += hs; home.GA += as;
-    away.GF += as; away.GA += hs;
-
-    if (hs > as) { home.G++; home.P += 3; away.M++; } 
-    else if (hs < as) { away.G++; away.P += 3; home.M++; } 
-    else { home.B++; away.B++; home.P += 1; away.P += 1; }
-  });
-
-  Object.keys(groups).sort().forEach(groupName => {
-    const teams = Object.values(groups[groupName]);
-    teams.forEach(t => t.AV = t.GF - t.GA);
-    
-    teams.sort((a, b) => {
-      if (b.P !== a.P) return b.P - a.P;
-      if (b.AV !== a.AV) return b.AV - a.AV;
-      return b.GF - a.GF;
-    });
-
-    const block = document.createElement('div');
-    block.className = 'group-block card';
-    let rows = '';
-    
-    teams.forEach(t => {
-      rows += `
-        <tr>
-          <td>${flag(t.name)} ${t.name}</td>
-          <td>${t.O}</td>
-          <td>${t.G}</td>
-          <td>${t.B}</td>
-          <td>${t.M}</td>
-          <td>${t.AV > 0 ? '+' + t.AV : t.AV}</td>
-          <td class="points">${t.P}</td>
-        </tr>
-      `;
-    });
-
-    block.innerHTML = `
-      <h3>${groupName}</h3>
-      <div style="overflow-x:auto;">
-        <table class="group-table">
-          <thead><tr><th>Takım</th><th>O</th><th>G</th><th>B</th><th>M</th><th>AV</th><th>P</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    `;
-    container.appendChild(block);
-  });
-}
-
-function newTeamStat(name) {
-  return { name, O: 0, G: 0, B: 0, M: 0, GF: 0, GA: 0, AV: 0, P: 0 };
-}
-
-/* =========================================================
-   10. AKTİF TAHMİN MAÇLARI (MATCH CARDS)
+   10. AKTİF TAHMİN MAÇLARI (MATCH CARDS) - DİNAMİK GÜNCELLENDİ
    ========================================================= */
 function renderMatches() {
   const container = document.getElementById('matches-container');
@@ -1044,8 +955,12 @@ function renderMatches() {
   const byDate = {};
   MATCHES.forEach(m => {
     if (RESULTS[m.id]) return; 
-    if (!byDate[m.d]) byDate[m.d] = [];
-    byDate[m.d].push(m);
+    
+    // Eşleşmeyi dinamik olarak çözümlüyoruz (W74 -> Almanya vb.)
+    const resolvedMatch = resolveDynamicMatch(m);
+    
+    if (!byDate[resolvedMatch.d]) byDate[resolvedMatch.d] = [];
+    byDate[resolvedMatch.d].push(resolvedMatch);
   });
 
   if (Object.keys(byDate).length === 0) {
@@ -1064,132 +979,9 @@ function renderMatches() {
     container.appendChild(dateBlock);
   });
 }   
-  
-function formatDate(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
-  const days = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
-  return d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'long', year: 'numeric' }) + ' - ' + days[d.getDay()];
-}
-
-// İKİLİ UX/UI TAHMİN KARTINI OLUŞTURAN GÜNCEL KOD
-function buildMatchCard(m) {
-  const card = document.createElement('div');
-  card.className = 'match-card';
-
-  const myPred = (PREDICTIONS[CURRENT_UID] && PREDICTIONS[CURRENT_UID][m.id]) || null;
-
-  const hval = myPred ? myPred.hScore : '';
-  const aval = myPred ? myPred.aScore : '';
-  
-  const penHVal = myPred ? (myPred.penHScore || '') : '';
-  const penAVal = myPred ? (myPred.penAScore || '') : '';
-  const checkHome = myPred && myPred.penWinner === 'home' ? 'checked' : '';
-  const checkAway = myPred && myPred.penWinner === 'away' ? 'checked' : '';
-
-  let knockoutPenaltyUi = '';
-  // Sadece eleme turlarında (Son 32 ve sonrası) penaltı tahmin alanı görünür
-  if (m.type === 'knockout') {
-    knockoutPenaltyUi = `
-      <div class="penalty-prediction-box" style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #ddd; font-size: 0.9rem;">
-        <strong style="color: #f59e0b;">🚨 Maç Penaltılara Kalırsa?</strong>
-        <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 8px;">
-          <label><input type="radio" name="penWinner-${m.id}" value="home" ${checkHome}> ${flag(m.h)} Kazanan</label>
-          <input type="number" min="0" id="pred-pen-h-${m.id}" value="${penHVal}" placeholder="0" style="width: 45px; text-align:center;">
-          <span>:</span>
-          <input type="number" min="0" id="pred-pen-a-${m.id}" value="${penAVal}" placeholder="0" style="width: 45px; text-align:center;">
-          <label><input type="radio" name="penWinner-${m.id}" value="away" ${checkAway}> Kazanan ${flag(m.a)}</label>
-        </div>
-      </div>
-    `;
-  }
-
-  const deleteButtonHtml = myPred ? `<button class="btn-danger btn-small" style="margin-left: 8px;" onclick="deletePrediction('${m.id}')">Sil</button>` : '';
-
-  let bodyHtml = `
-    <div class="score-inputs">
-      <input type="number" min="0" id="pred-h-${m.id}" value="${hval}" placeholder="0">
-      <span class="vs">:</span>
-      <input type="number" min="0" id="pred-a-${m.id}" value="${aval}" placeholder="0">
-    </div>
-    ${knockoutPenaltyUi}
-    <div class="match-actions" style="margin-top:10px;">
-      <button class="btn-primary btn-small" onclick="savePrediction('${m.id}', '${m.type}')">Kaydet</button>
-      ${deleteButtonHtml}
-    </div>
-  `;
-
-  // Diğer oyuncuların tahminlerini listeleme
-  let othersHtml = '<div class="others-predictions"><strong>Diğer Tahminler:</strong><br>';
-  let hasOthers = false;
-  
-  for (const [uid, user] of Object.entries(USERS)) {
-    if (uid === CURRENT_UID || isAdminName(user.name)) continue;
-    const p = PREDICTIONS[uid] && PREDICTIONS[uid][m.id];
-    if (p) {
-      hasOthers = true;
-      let pText = `${user.name}: ${p.hScore}:${p.aScore}`;
-      if (m.type === 'knockout' && p.penWinner) {
-        const winLabel = p.penWinner === 'home' ? 'H' : 'A';
-        pText += ` (Pen: ${winLabel} - ${p.penHScore}:${p.penAScore})`;
-      }
-      othersHtml += `<span class="pred-item">${pText}</span>`;
-    }
-  }
-  othersHtml += '</div>';
-  if (!hasOthers) othersHtml = '';
-
-  card.innerHTML = `
-    <div class="match-top"><span>${m.g}</span><span>${m.t}</span></div>
-    <div class="match-teams">
-      <span>${flag(m.h)} ${m.h}</span><span class="vs">vs</span><span>${m.a} ${flag(m.a)}</span>
-    </div>
-    ${bodyHtml}
-    ${othersHtml}
-  `;
-  return card;
-}
-
-function savePrediction(matchId, matchType) {
-  const h = document.getElementById('pred-h-' + matchId).value;
-  const a = document.getElementById('pred-a-' + matchId).value;
-
-  if (h === '' || a === '' || h < 0 || a < 0) {
-    alert('Lütfen geçerli bir 120 dk skoru girin.');
-    return;
-  }
-
-  const predData = { hScore: h, aScore: a };
-
-  if (matchType === 'knockout') {
-    const penWEl = document.querySelector(`input[name="penWinner-${matchId}"]:checked`);
-    const ph = document.getElementById('pred-pen-h-' + matchId).value;
-    const pa = document.getElementById('pred-pen-a-' + matchId).value;
-
-    if (penWEl || ph !== '' || pa !== '') {
-      if (!penWEl || ph === '' || pa === '' || ph < 0 || pa < 0) {
-        alert('Penaltı tahmini yapıyorsanız hem kazananı seçmeli hem de skor girmelisiniz!');
-        return;
-      }
-      predData.penWinner = penWEl.value;
-      predData.penHScore = ph;
-      predData.penAScore = pa;
-    }
-  }
-
-  db.ref('predictions/' + CURRENT_UID + '/' + matchId).set(predData).then(() => {
-    alert('Tahmininiz başarıyla kaydedildi!');
-  });
-}
-
-function deletePrediction(matchId) {
-  if (!confirm('Bu maça yaptığın tahmini silmek istediğine emin misin?')) return;
-  db.ref('predictions/' + CURRENT_UID + '/' + matchId).remove().then(() => {
-    alert('Tahmininiz başarıyla silindi!');
-  });
-}
 
 /* =========================================================
-   11. OYNANMIŞ SONUÇLAR SEKMESİ (PLAYED MATCHES) - PARÇALI PUAN
+   11. OYNANMIŞ SONUÇLAR SEKMESİ - DİNAMİK GÜNCELLENDİ
    ========================================================= */
 function renderResults() {
   const container = document.getElementById('results-container');
@@ -1206,13 +998,15 @@ function renderResults() {
   }
 
   playedMatches.forEach(m => {
-    const result = RESULTS[m.id];
+    // Oynanmış maçın takımlarını dinamik çözüyoruz ki sonuçlarda da ülke adları doğru görünsün
+    const resolvedMatch = resolveDynamicMatch(m);
+    const result = RESULTS[resolvedMatch.id];
     const card = document.createElement('div');
     card.className = 'match-card';
 
     let resScoreText = `${result.hScore} : ${result.aScore}`;
     if (result.penWinner) {
-      const penTeam = result.penWinner === 'home' ? m.h : m.a;
+      const penTeam = result.penWinner === 'home' ? resolvedMatch.h : resolvedMatch.a;
       resScoreText += ` (Uzt/Pen: ${penTeam} ${result.penHScore}:${result.penAScore} kazandı)`;
     }
 
@@ -1221,33 +1015,24 @@ function renderResults() {
     
     for (const [uid, user] of Object.entries(USERS)) {
       if (isAdminName(user.name)) continue;
-      const p = PREDICTIONS[uid] && PREDICTIONS[uid][m.id];
+      const p = PREDICTIONS[uid] && PREDICTIONS[uid][resolvedMatch.id];
       if (p) {
         any = true;
-        
-        // Mevcut evaluatePrediction fonksiyonunu çalıştırıp detayları alıyoruz
         const ev = evaluatePrediction(p, result);
         let mainPts = 0;
         let penPts = 0;
 
         if (ev && ev.label) {
-          // 120 dk puanını etiket içeriğinden ayıklıyoruz
           if (ev.label.includes('120 Dk Tam Skor')) mainPts = 2;
           else if (ev.label.includes('120 Dk Taraf/Beraberlik')) mainPts = 1;
-
-          // Penaltı puanlarını ayıklıyoruz (Kazanan + Skor durumuna göre)
           if (ev.label.includes('Penaltı Kazananı')) penPts += 1;
           if (ev.label.includes('Penaltı Tam Skoru')) penPts += 1;
         }
 
-        // Ana maç skoru ve puanı
         let pText = `${p.hScore}:${p.aScore} <span style="color:#22c55e; font-weight:bold;">(+${mainPts})</span>`;
-        
-        // Eğer eleme turuysa ve penaltı tahmini girilmişse yanına ekle
-        if (m.type === 'knockout' && p.penHScore !== undefined && p.penAScore !== undefined && p.penHScore !== '') {
+        if (resolvedMatch.type === 'knockout' && p.penHScore !== undefined && p.penAScore !== undefined && p.penHScore !== '') {
           pText += ` &nbsp;Pen: ${p.penHScore}:${p.penAScore} <span style="color:#22c55e; font-weight:bold;">(+${penPts})</span>`;
         }
-
         predsHtml += `<span class="pred-item">${user.name}: ${pText}</span>`;
       }
     }
@@ -1255,9 +1040,9 @@ function renderResults() {
     if (!any) predsHtml = '<div class="others-predictions" style="color:var(--muted);">Bu maça hiç tahmin yapılmamış.</div>';
 
     card.innerHTML = `
-      <div class="match-top"><span>${m.g}</span><span>${formatDate(m.d)}</span></div>
+      <div class="match-top"><span>${resolvedMatch.g}</span><span>${formatDate(resolvedMatch.d)}</span></div>
       <div class="match-teams">
-        <span>${flag(m.h)} ${m.h}</span><span class="vs">vs</span><span>${m.a} ${flag(m.a)}</span>
+        <span>${flag(resolvedMatch.h)} ${resolvedMatch.h}</span><span class="vs">vs</span><span>${resolvedMatch.a} ${flag(resolvedMatch.a)}</span>
       </div>
       <div class="result-box"><span class="result-score">${resScoreText}</span></div>
       ${predsHtml}
@@ -1267,14 +1052,16 @@ function renderResults() {
 }
 
 /* =========================================================
-   12. ADMIN YÖNETİM PANELİ (ADMIN CONTROL PANEL)
+   12. ADMIN YÖNETİM PANELİ (ADMIN CONTROL PANEL) - DİNAMİK GÜNCELLENDİ
    ========================================================= */
 function renderAdminPanel() {
   const matchContainer = document.getElementById('admin-matches-container');
   if (matchContainer) {
     matchContainer.innerHTML = '';
     MATCHES.forEach(m => {
-      const result = RESULTS[m.id] || {};
+      // Admin panelindeki satırı da dinamik çözüyoruz
+      const resolvedMatch = resolveDynamicMatch(m);
+      const result = RESULTS[resolvedMatch.id] || {};
       const row = document.createElement('div');
       row.className = 'admin-match-row';
       row.style.borderBottom = "1px solid #eee";
@@ -1289,32 +1076,31 @@ function renderAdminPanel() {
       const checkAway = result.penWinner === 'away' ? 'checked' : '';
 
       let adminKnockoutUi = '';
-      // Admin panelinde de eleme maçları için penaltı alanları çıkar
-      if (m.type === 'knockout') {
+      if (resolvedMatch.type === 'knockout') {
         adminKnockoutUi = `
           <div style="margin-top: 5px; background: #fffbeb; padding: 6px; border-radius: 4px;">
             <span style="font-size:0.8rem; color:#b45309;">⚠️ Eğer Penaltılara Gittiyse:</span>
             <div style="display:flex; gap:6px; align-items:center; margin-top:3px;">
-              <label style="font-size:0.8rem;"><input type="radio" name="adminPenWinner-${m.id}" value="home" ${checkHome}> Ev</label>
-              <input type="number" id="admin-pen-h-${m.id}" value="${rPenH}" placeholder="Skor" style="width:40px; font-size:0.8rem;">
+              <label style="font-size:0.8rem;"><input type="radio" name="adminPenWinner-${resolvedMatch.id}" value="home" ${checkHome}> Ev</label>
+              <input type="number" id="admin-pen-h-${resolvedMatch.id}" value="${rPenH}" placeholder="Skor" style="width:40px; font-size:0.8rem;">
               <span>:</span>
-              <input type="number" id="admin-pen-a-${m.id}" value="${rPenA}" placeholder="Skor" style="width:40px; font-size:0.8rem;">
-              <label style="font-size:0.8rem;"><input type="radio" name="adminPenWinner-${m.id}" value="away" ${checkAway}> Dep</label>
+              <input type="number" id="admin-pen-a-${resolvedMatch.id}" value="${rPenA}" placeholder="Skor" style="width:40px; font-size:0.8rem;">
+              <label style="font-size:0.8rem;"><input type="radio" name="adminPenWinner-${resolvedMatch.id}" value="away" ${checkAway}> Dep</label>
             </div>
           </div>
         `;
       }
 
       row.innerHTML = `
-        <div class="teams" style="font-weight:bold;">${flag(m.h)} ${m.h} vs ${m.a} ${flag(m.a)} <br><small style="color:var(--muted)">${m.g} - ${formatDate(m.d)} (${m.t})</small></div>
+        <div class="teams" style="font-weight:bold;">${flag(resolvedMatch.h)} ${resolvedMatch.h} vs ${resolvedMatch.a} ${flag(resolvedMatch.a)} <br><small style="color:var(--muted)">${resolvedMatch.g} - ${formatDate(resolvedMatch.d)} (${resolvedMatch.t})</small></div>
         <div class="admin-score-inputs" style="margin-top:5px;">
-          <input type="number" min="0" id="admin-h-${m.id}" value="${rH}" placeholder="0" style="width:45px;">
+          <input type="number" min="0" id="admin-h-${resolvedMatch.id}" value="${rH}" placeholder="0" style="width:45px;">
           <span>:</span>
-          <input type="number" min="0" id="admin-a-${m.id}" value="${rA}" placeholder="0" style="width:45px;">
+          <input type="number" min="0" id="admin-a-${resolvedMatch.id}" value="${rA}" placeholder="0" style="width:45px;">
           ${adminKnockoutUi}
           <div style="margin-top:5px;">
-            <button class="btn-primary btn-small" onclick="adminSaveResult('${m.id}', '${m.type}')">Kaydet</button>
-            <button class="btn-danger btn-small" onclick="adminDeleteResult('${m.id}')">Sil</button>
+            <button class="btn-primary btn-small" onclick="adminSaveResult('${resolvedMatch.id}', '${resolvedMatch.type}')">Kaydet</button>
+            <button class="btn-danger btn-small" onclick="adminDeleteResult('${resolvedMatch.id}')">Sil</button>
           </div>
         </div>
       `;
@@ -1341,49 +1127,6 @@ function renderAdminPanel() {
       userContainer.appendChild(row);
     });
   }
-}
-
-function adminSaveResult(matchId, matchType) {
-  const h = document.getElementById('admin-h-' + matchId).value;
-  const a = document.getElementById('admin-a-' + matchId).value;
-
-  if (h === '' || a === '' || h < 0 || a < 0) {
-    alert('Lütfen geçerli bir 120 dk skoru girin.');
-    return;
-  }
-
-  const resultData = { hScore: h, aScore: a };
-
-  if (matchType === 'knockout') {
-    const penWEl = document.querySelector(`input[name="adminPenWinner-${matchId}"]:checked`);
-    const ph = document.getElementById('admin-pen-h-' + matchId).value;
-    const pa = document.getElementById('admin-pen-a-' + matchId).value;
-
-    if (penWEl || ph !== '' || pa !== '') {
-      if (!penWEl || ph === '' || pa === '' || ph < 0 || pa < 0) {
-        alert('Penaltı sonucu giriyorsanız hem kazanan tarafı radyo butondan seçmeli hem de skorları yazmalısınız!');
-        return;
-      }
-      resultData.penWinner = penWEl.value;
-      resultData.penHScore = ph;
-      resultData.penAScore = pa;
-    }
-  }
-
-  db.ref('results/' + matchId).set(resultData).then(() => {
-    alert('Maç sonucu başarıyla kaydedildi ve puanlar güncellendi!');
-  });
-}
-
-function adminDeleteResult(matchId) {
-  if (!confirm('Bu maçın sonucunu silmek istediğinize emin misiniz?')) return;
-  db.ref('results/' + matchId).remove();
-}
-
-function adminDeleteUser(uid, name) {
-  if (!confirm(`"${name}" kullanıcısını ve tüm tahminlerini silmek istediğinize emin misiniz?`)) return;
-  db.ref('users/' + uid).remove();
-  db.ref('predictions/' + uid).remove();
 }
 
 // ETİKETİN BURADA KAPANMASI ŞART:
