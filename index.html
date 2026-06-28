@@ -1190,7 +1190,7 @@ function deletePrediction(matchId) {
 }
 
 /* =========================================================
-   11. OYNANMIŞ SONUÇLAR SEKMESİ (PLAYED MATCHES)
+   11. OYNANMIŞ SONUÇLAR SEKMESİ (PLAYED MATCHES) - PARÇALI PUAN
    ========================================================= */
 function renderResults() {
   const container = document.getElementById('results-container');
@@ -1225,10 +1225,31 @@ function renderResults() {
       const p = PREDICTIONS[uid] && PREDICTIONS[uid][m.id];
       if (p) {
         any = true;
+        
+        // Mevcut evaluatePrediction fonksiyonunu çalıştırıp detayları alıyoruz
         const ev = evaluatePrediction(p, result);
-        const pts = ev ? ev.point : 0;
-        const breakdownText = ev ? `[${ev.label}]` : '';
-        predsHtml += `<span class="pred-item">${user.name}: ${p.hScore}:${p.aScore} (${pts} puan) <small style="color:green">${breakdownText}</small></span>`;
+        let mainPts = 0;
+        let penPts = 0;
+
+        if (ev && ev.label) {
+          // 120 dk puanını etiket içeriğinden ayıklıyoruz
+          if (ev.label.includes('120 Dk Tam Skor')) mainPts = 2;
+          else if (ev.label.includes('120 Dk Taraf/Beraberlik')) mainPts = 1;
+
+          // Penaltı puanlarını ayıklıyoruz (Kazanan + Skor durumuna göre)
+          if (ev.label.includes('Penaltı Kazananı')) penPts += 1;
+          if (ev.label.includes('Penaltı Tam Skoru')) penPts += 1;
+        }
+
+        // Ana maç skoru ve puanı
+        let pText = `${p.hScore}:${p.aScore} <span style="color:#22c55e; font-weight:bold;">(+${mainPts})</span>`;
+        
+        // Eğer eleme turuysa ve penaltı tahmini girilmişse yanına ekle
+        if (m.type === 'knockout' && p.penHScore !== undefined && p.penAScore !== undefined && p.penHScore !== '') {
+          pText += ` &nbsp;Pen: ${p.penHScore}:${p.penAScore} <span style="color:#22c55e; font-weight:bold;">(+${penPts})</span>`;
+        }
+
+        predsHtml += `<span class="pred-item">${user.name}: ${pText}</span>`;
       }
     }
     predsHtml += '</div>';
